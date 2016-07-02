@@ -1,0 +1,200 @@
+#!/bin/bash
+
+cleanup () {
+	[ -f $TMPTGZ ] && rm $TMPTGZ
+	[ -f $PAYLOAD ] && rm $PAYLOAD
+}
+
+usage () {
+	echo -e "Utility for installation package creation"
+	echo "Usage: packager [-n <install_file_name>] <dir_path_1> <dir_path_2> ..."
+}
+
+error () {
+	echo "ERROR: $1"
+	cleanup
+	exit 1
+}
+
+test_config () {
+	local path=$(cat $1 | grep "path:" | sed -e "s/^\s*path:\s*\(.*\)$/\1/g")
+	[ "$path" == "" ] && echo "Invalid config file $1" && return 1
+	return 0
+}
+
+test_package_dir () {
+	local ldir=$1
+	[ ! -d $ldir ] && echo "Invalid directory path \"$ldir\", directory does not exist" && return 1
+	[ ! -f $ldir/config ] && echo "Invalid directory, \"${ldir}config\" file missing" && return 1
+	[ ! -f $ldir/script ] && echo "Invalid directory, \"${ldir}script\" file missing" && return 1
+	[ ! -d $ldir/package ] && echo "Invalid directory, \"${ldir}package\" directory missing" && return 1
+
+	test_config "${ldir}/config"
+	[ $? -ne 0 ] && return 1
+
+	return 0
+}
+
+TMPTGZ=tmp.tgz
+PAYLOAD=payload
+INAME="generic package"
+IFILE=install.sh
+
+declare -a PACKAGES=()
+
+cleanup
+
+[ $# -eq 0 ] && usage && error "No argumetns"
+
+name_option=0
+for i in $*; do
+	[ "$i" == "-n" ] && name_option=1 && continue
+	[ $name_option -eq 1 ] && name_option=0 && INAME="$i" && IFILE="${i}_${IFILE}" && continue
+	PACKAGES+=($i)
+done
+
+# check prerequisites
+echo "Checking prerequisites..."
+for i in "${PACKAGES[@]}"; do
+	test_package_dir $i
+	[ $? -ne 0 ] && error "Directory $i does not meet prerequisites"
+done
+echo -ne "\e[1A"; echo "Checking prerequisites...OK"
+
+# create install script
+beg=$(grep --text --line-number "^#BEGIN_INSTALL_SCRIPT" $0 | cut -d ':' -f 1)
+end=$(grep --text --line-number "^#END_INSTALL_SCRIPT" $0 | cut -d ':' -f 1)
+cat $0 | sed -n "$(($beg + 1)),$(($end - 1))p" | sed -e "s/__INAME__/$INAME/g" > $IFILE
+
+# create payload
+for i in "${PACKAGES[@]}"; do
+	echo "Creating package \"$pkg\"..."
+	[ -f $TMPTGZ ] && rm $TMPTGZ
+	pkg=$(basename $i)
+	tar czf tmp.tgz -C $i . > /dev/null 2>&1
+	[ $? -ne 0 ] && error "tar file creation error"
+	echo "PAYLOAD_START:$pkg" >> $PAYLOAD
+	cat $TMPTGZ >> $PAYLOAD
+	echo -ne "\e[1A"; echo -e "\e[0KCreating package \"$pkg\"...OK"
+	echo -e "\nPAYLOAD_END:$pkg" >> $PAYLOAD
+done
+
+# append payload to install script
+cat $PAYLOAD >> $IFILE
+chmod +x $IFILE
+
+echo "Installation file created"
+cleanup
+exit 0
+
+
+################################################################################
+############################## INSTALL SCRIPT ##################################
+################################################################################
+
+#BEGIN_INSTALL_SCRIPT
+#!/bin/bash
+
+TMPDIR=/tmp/packager_tmp
+
+cleanup () {
+	[ -d $TMPDIR ] && rm -rf $TMPDIR
+}
+
+error () {
+	echo "ERROR: $1"
+	cleanup
+	exit 1
+}
+
+test_config () {
+	local path=$(cat $1 | grep "path:" | sed -e "s/^\s*path:\s*\(.*\)$/\1/g")
+	[ "$path" == "" ] && echo "Invalid config file \"$1\"" && return 1
+#	[ ! -d $path ] && echo "ERROR: Installation dir \"$path\" does not exist" && return 1
+	return 0
+}
+
+extract_packages () {
+	local beg=
+	local end=
+	local TPATH=
+	local pkgs=($*)
+
+	echo "Extracting packages..."
+	for pkg in ${pkgs[@]}; do
+		echo -ne "\e[1A"; echo -e "\e[0KExtracting packages...$pkg"
+		beg=$(grep --text --line-number "^PAYLOAD_START:$pkg$" $0 | cut -d ':' -f 1)
+		end=$(grep --text --line-number "^PAYLOAD_END:$pkg$" $0 | cut -d ':' -f 1)
+		TPATH=$TMPDIR/${pkg}
+		cat $0 | sed -n "$(($beg + 1)),$(($end - 1))p" > $TPATH.tgz
+		truncate --size=-1 $TPATH.tgz
+		[ -d $TPATH ] && rm $TPATH -rf; mkdir $TPATH
+		tar xzf $TPATH.tgz -C $TPATH > /dev/null 2>&1
+		[ $? -ne 0 ] && error "cannot untar payload. Installation file is corrupted."
+	done
+	echo -ne "\e[1A"; echo -e "\e[0KExtracting packages...done"
+}
+
+check_packages () {
+	local TPATH=
+	local pkgs=($*)
+
+	echo "Checking packages..."
+	for pkg in ${pkgs[@]}; do
+		echo -ne "\e[1A"; echo -e "\e[0KChecking packages...$pkg"
+		TPATH=$TMPDIR/${pkg}
+		[ ! -d $TPATH ] || [ ! -f $TPATH/config ] || [ ! -f $TPATH/script ] || [ ! -d $TPATH/package ] && error "corrupted package $pkg"
+		
+		test_config "$TPATH/config"
+		[ $? -ne 0 ] && error "corrupted package $pkg"
+	done
+	echo -ne "\e[1A"; echo -e "\e[0KChecking packages...done"
+}
+
+put_packages () {
+	local pkgs=($*)
+	local TPATH=
+	local IDIR=
+
+	echo "Putting packages to their places..."
+	for pkg in ${pkgs[@]}; do
+		TPATH=$TMPDIR/${pkg}
+		IDIR=$(cat $TPATH/config | grep "path:" | sed -e "s/^\s*path:\s*\(.*\)$/\1/g")
+		[ ! -d $IDIR ] && mkdir -p $IDIR
+		[ "$(ls $TPATH/package)" != "" ] && cp -r --preserve=mode $TPATH/package/* $IDIR
+	done
+	echo -ne "\e[1A"; echo -e "\e[0KPutting packages to their places...done"
+}
+
+run_package_scripts () {
+	local pkgs=($*)
+	local TPATH=
+	local err=0
+	
+	echo "Running package scripts..."
+	for pkg in ${pkgs[@]}; do
+		TPATH=$TMPDIR/${pkg}
+		bash $TPATH/script > /dev/null
+		[ $? -ne 0 ] && err=1
+	done
+	[ $err -eq 0 ] && echo -ne "\e[1A"; echo -e "\e[0KRunning package scripts...done"
+}
+
+# MAIN
+echo "Installing __INAME__ " | sed -e "s/\(.*\)/\U\1/"
+
+[ -d $TMPDIR ] && echo "ERROR: temporary directory $TMPDIR already exists, remove manually and restart installation" && exit 1 
+mkdir $TMPDIR
+
+PACKAGES=$(cat $0 | grep --text "^PAYLOAD_START:" | sed -e "s/^PAYLOAD_START:\(.*\)$/\1/g")
+
+extract_packages	$PACKAGES
+check_packages		$PACKAGES
+put_packages		$PACKAGES
+run_package_scripts	$PACKAGES
+
+echo "__INAME__ installation completed" | sed -e "s/\(.*\)/\U\1/"
+
+cleanup
+exit 0
+#END_INSTALL_SCRIPT
