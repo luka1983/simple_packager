@@ -29,4 +29,4 @@ script that will be executed when package is istalled.
 		
 		$ ./packager [-n installer_name] <package_dir_1> <package_dir_2> ...
 
-4. The steps above will create _<installer_name>_install.sh_ script.
+4. The steps above will create _<installer_name>\_install.sh_ script.
