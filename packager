@@ -71,7 +71,7 @@ for i in "${PACKAGES[@]}"; do
 	echo "Creating package \"$pkg\"..."
 	[ -f $TMPTGZ ] && rm $TMPTGZ
 	pkg=$(basename $i)
-	tar czf tmp.tgz -C $i . > /dev/null 2>&1
+	tar czpf tmp.tgz -C $i . > /dev/null 2>&1
 	[ $? -ne 0 ] && error "tar file creation error"
 	echo "PAYLOAD_START:$pkg" >> $PAYLOAD
 	cat $TMPTGZ >> $PAYLOAD
