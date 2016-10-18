@@ -2,7 +2,7 @@ Simple packager
 ===============
 
 Utillity for creation of simple linux installation files. Each installation
-file is assebled of one of more package units.
+file is assembled of one of more package units.
 
 Purpose
 -------
@@ -23,7 +23,7 @@ Installation file creation:
 
 2. File _config_ should contain path to which package files located in
 _package_ directory need to be extracted to. File _script_ contains bash
-script that will be executed when package is istalled.
+script that will be executed when package is installed.
 
 3. Run the packager script with command
 		
